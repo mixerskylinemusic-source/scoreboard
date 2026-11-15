@@ -102,10 +102,13 @@
     thVoice = vs.find(v => /^th/i.test(v.lang)) || null;
   }
   if (window.speechSynthesis) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-  function announce(b, r) {
+  // scorer's score first; if tied, "<n> เท่า"
+  function announce(scorer) {
     if (!soundOn || !window.speechSynthesis) return;
-    const hi = Math.max(b, r), lo = Math.min(b, r);
-    const u = new SpeechSynthesisUtterance(thai(hi) + ' ' + thai(lo));
+    const other = scorer === 'blue' ? 'red' : 'blue';
+    const mine = score[scorer], theirs = score[other];
+    const text = mine === theirs ? thai(mine) + ' เท่า' : thai(mine) + ' ' + thai(theirs);
+    const u = new SpeechSynthesisUtterance(text);
     u.lang = 'th-TH';
     u.volume = 1;
     u.rate = 0.9;
@@ -155,7 +158,7 @@
     const before = score.blue + score.red;
     score[id] = n;
     render();
-    if (score.blue + score.red > before) { setServer(id); glow(id); announce(score.blue, score.red); }
+    if (score.blue + score.red > before) { setServer(id); glow(id); announce(id); }
   }
 
   // ---------- Firebase Realtime Database adapter ----------
