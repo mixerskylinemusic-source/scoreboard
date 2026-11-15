@@ -26,7 +26,24 @@
   @keyframes edgeGlow {
     0%   { box-shadow: inset 0 0 90px 18px var(--c), inset 0 0 16px 4px #fff; }
   }
+  .team { flex-direction: column; gap: 5vh; }
   .digits { display: flex; gap: 4vw; }
+  /* serve court indicator: dot lit = serving from that side (server's own left/right) */
+  .court { display: flex; gap: 8vw; }
+  .court div { display: flex; flex-direction: column; align-items: center; gap: 6px; color: #667; font-size: clamp(11px, 1.6vw, 16px); }
+  .court i { width: clamp(22px, 4vw, 44px); height: clamp(22px, 4vw, 44px); border-radius: 50%; background: var(--off); }
+  .court div.on i { background: var(--c); box-shadow: 0 0 14px 3px var(--c); }
+  .court div.on { color: var(--c); font-weight: 700; }
+  /* "switch court" cue when the same side wins consecutive points */
+  .swap {
+    opacity: 0; transform: scale(.8); transition: opacity .15s, transform .15s;
+    font-weight: 800; letter-spacing: 1px; font-size: clamp(16px, 3vw, 32px);
+    color: #000; background: var(--c); padding: 6px 18px; border-radius: 999px;
+    box-shadow: 0 0 22px 4px var(--c);
+  }
+  .swap.show { opacity: 1; transform: scale(1); animation: swapPulse .6s ease-in-out infinite; }
+  @keyframes swapPulse { 50% { transform: scale(1.15); } }
+
   .digits svg { width: 20vw; max-width: 260px; height: auto; }
   .seg { fill: var(--off); }
   .seg.on { fill: var(--c); filter: drop-shadow(0 0 8px var(--c)); }
@@ -132,17 +149,50 @@
     const box = document.querySelector('#' + id + ' .digits');
     digits[id] = [makeDigit(), makeDigit()];
     digits[id].forEach(x => box.appendChild(x));
+    const court = document.createElement('div');
+    court.className = 'court';
+    court.innerHTML = '<div data-s="left"><i></i>ซ้าย</div><div data-s="right"><i></i>ขวา</div>';
+    document.getElementById(id).appendChild(court);
+    const sw = document.createElement('div');
+    sw.className = 'swap';
+    sw.textContent = '⇄ สลับช่อง';
+    document.getElementById(id).appendChild(sw);
   });
+  let swapTimer = null;
+  function clearSwitch() {
+    clearTimeout(swapTimer);
+    document.querySelectorAll('.swap').forEach(e => e.classList.remove('show'));
+    document.querySelectorAll('.team').forEach(e => e.classList.remove('swapping'));
+  }
+  function showSwitch(id, cont) {
+    clearSwitch();
+    if (!cont) return;
+    const el = document.getElementById(id);
+    el.querySelector('.swap').classList.add('show');
+    el.classList.add('swapping');
+    // stays until the next point, undo or reset
+  }
+  // serving team: even score -> serve from right, odd -> left (switches each point they win)
+  function updateCourt() {
+    for (const id of ['blue', 'red']) {
+      const el = document.getElementById(id);
+      const serving = el.classList.contains('serving');
+      const side = score[id] % 2 === 0 ? 'right' : 'left';
+      el.querySelectorAll('.court div').forEach(d => d.classList.toggle('on', serving && d.dataset.s === side));
+    }
+  }
   function render() {
     for (const id of ['blue', 'red']) {
       setDigit(digits[id][0], Math.floor(score[id] / 10));
       setDigit(digits[id][1], score[id] % 10);
     }
+    updateCourt();
   }
   render();
 
   function setServer(id) {
     for (const s of ['blue', 'red']) document.getElementById(s).classList.toggle('serving', s === id);
+    updateCourt();
   }
   function glow(id) {
     const el = document.getElementById(id);
@@ -158,7 +208,10 @@
     const before = score.blue + score.red;
     score[id] = n;
     render();
-    if (score.blue + score.red > before) { setServer(id); glow(id); announce(id); }
+    if (score.blue + score.red > before) {
+      const cont = document.getElementById(id).classList.contains('serving');
+      setServer(id); glow(id); showSwitch(id, cont); announce(id);
+    }
   }
 
   // ---------- Firebase Realtime Database adapter ----------
@@ -236,7 +289,7 @@
     score[id] = (score[id] + 99) % 100;
     render();
     const prev = SIDE[hist.slice(-1)] || null;
-    setServer(prev);
+    setServer(prev); clearSwitch();
     flush(id); saveServer(prev || ''); saveHist();
   }
   function resetAll() {
@@ -245,7 +298,7 @@
     }
     hist = '';
     render();
-    setServer(null);
+    setServer(null); clearSwitch();
     flush('blue'); flush('red'); saveServer(''); saveHist();
   }
 
