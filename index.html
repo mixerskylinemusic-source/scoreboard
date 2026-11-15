@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Scoreboard</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: system-ui, sans-serif; }
+  .board { display: flex; height: 100%; }
+  .team {
+    flex: 1; display: flex; align-items: center; justify-content: center; cursor: pointer;
+    --c: #2f6bff; --off: #0f1a35; background: #05070d;
+    transition: background .1s;
+  }
+  .team.red { --c: #ff2d3d; --off: #35101a; background: #0d0507; border-left: 2px solid #222; }
+  .team:active { background: color-mix(in srgb, var(--c) 14%, #000); }
+  /* stays lit on the side that scored last (the server) */
+  .team { box-shadow: inset 0 0 0 0 transparent, inset 0 0 0 0 transparent; transition: background .1s, box-shadow .25s; }
+  .team.serving {
+    box-shadow: inset 0 0 50px 8px color-mix(in srgb, var(--c) 75%, transparent), inset 0 0 8px 2px var(--c);
+  }
+  .team.flash { animation: edgeGlow .6s ease-out; }
+  @keyframes edgeGlow {
+    0%   { box-shadow: inset 0 0 90px 18px var(--c), inset 0 0 16px 4px #fff; }
+  }
+  .digits { display: flex; gap: 4vw; }
+  .digits svg { width: 20vw; max-width: 260px; height: auto; }
+  .seg { fill: var(--off); }
+  .seg.on { fill: var(--c); filter: drop-shadow(0 0 8px var(--c)); }
+  .bar {
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+    display: flex; gap: 10px; align-items: center;
+  }
+  .bar button {
+    font-size: 1rem; font-weight: 600; letter-spacing: 2px;
+    border: 1px solid #555; border-radius: 999px; padding: 8px 22px;
+    color: #ccc; background: #000; cursor: pointer; opacity: .7;
+  }
+  .bar button:hover { opacity: 1; }
+  #sound { padding: 8px 14px; letter-spacing: 0; }
+  #status { position: fixed; left: 12px; bottom: 10px; font-size: 11px; color: #666; }
+</style>
+</head>
+<body>
+  <div class="board">
+    <section class="team blue" id="blue"><div class="digits"></div></section>
+    <section class="team red" id="red"><div class="digits"></div></section>
+  </div>
+  <div class="bar">
+    <button id="undo" title="‡∏¢‡πâ‡∏≠‡∏ô‡πÅ‡∏ï‡πâ‡∏°‡∏•‡πà‡∏≤‡∏™‡∏∏‡∏î (Z)">‚Ü∂ UNDO</button>
+    <button id="reset">RESET</button>
+    <button id="sound" title="‡πÄ‡∏õ‡∏¥‡∏î/‡∏õ‡∏¥‡∏î‡πÄ‡∏™‡∏µ‡∏¢‡∏á">üîä</button>
+  </div>
+  <div id="status"></div>
+
+<script>
+  // ---------- 7-segment ----------
+  const MAP = { 0:'abcdef', 1:'bc', 2:'abdeg', 3:'abcdg', 4:'bcfg', 5:'acdfg', 6:'acdefg', 7:'abc', 8:'abcdefg', 9:'abcdfg' };
+  const SEG = {
+    a:'12,6 18,0 62,0 68,6 62,12 18,12',
+    b:'70,8 76,14 76,54 70,60 64,54 64,14',
+    c:'70,66 76,72 76,112 70,118 64,112 64,72',
+    d:'12,114 18,108 62,108 68,114 62,120 18,120',
+    e:'6,66 12,72 12,112 6,118 0,112 0,72',
+    f:'6,8 12,14 12,54 6,60 0,54 0,14',
+    g:'12,60 18,54 62,54 68,60 62,66 18,66'
+  };
+  const NS = 'http://www.w3.org/2000/svg';
+  function makeDigit() {
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '-2 -2 80 124');
+    for (const k in SEG) {
+      const p = document.createElementNS(NS, 'polygon');
+      p.setAttribute('points', SEG[k]);
+      p.setAttribute('class', 'seg');
+      p.dataset.s = k;
+      svg.appendChild(p);
+    }
+    return svg;
+  }
+  function setDigit(svg, n) {
+    svg.querySelectorAll('.seg').forEach(p => p.classList.toggle('on', MAP[n].includes(p.dataset.s)));
+  }
+
+  // ---------- Thai number words ----------
+  const ONES = ['‡∏®‡∏π‡∏ô‡∏¢‡πå','‡∏´‡∏ô‡∏∂‡πà‡∏á','‡∏™‡∏≠‡∏á','‡∏™‡∏≤‡∏°','‡∏™‡∏µ‡πà','‡∏´‡πâ‡∏≤','‡∏´‡∏Å','‡πÄ‡∏à‡πá‡∏î','‡πÅ‡∏õ‡∏î','‡πÄ‡∏Å‡πâ‡∏≤'];
+  function thai(n) {
+    if (n < 10) return ONES[n];
+    const t = Math.floor(n / 10), o = n % 10;
+    const tens = t === 1 ? '‡∏™‡∏¥‡∏ö' : t === 2 ? '‡∏¢‡∏µ‡πà‡∏™‡∏¥‡∏ö' : ONES[t] + '‡∏™‡∏¥‡∏ö';
+    return tens + (o === 0 ? '' : o === 1 ? '‡πÄ‡∏≠‡πá‡∏î' : ONES[o]);
+  }
+
+  // ---------- Speech ----------
+  let soundOn = true;
+  let thVoice = null;
+  function pickVoice() {
+    const vs = window.speechSynthesis ? speechSynthesis.getVoices() : [];
+    thVoice = vs.find(v => /^th/i.test(v.lang)) || null;
+  }
+  if (window.speechSynthesis) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+  function announce(b, r) {
+    if (!soundOn || !window.speechSynthesis) return;
+    const hi = Math.max(b, r), lo = Math.min(b, r);
+    const u = new SpeechSynthesisUtterance(thai(hi) + ' ' + thai(lo));
+    u.lang = 'th-TH';
+    u.volume = 1;
+    u.rate = 0.9;
+    if (thVoice) u.voice = thVoice;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  }
+  const soundBtn = document.getElementById('sound');
+  soundBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    soundOn = !soundOn;
+    soundBtn.textContent = soundOn ? 'üîä' : 'üîá';
+    if (!soundOn && window.speechSynthesis) speechSynthesis.cancel();
+    soundBtn.blur();
+  });
+
+  // ---------- State ----------
+  const score = { blue: 0, red: 0 };
+  const digits = {};
+  ['blue', 'red'].forEach(id => {
+    const box = document.querySelector('#' + id + ' .digits');
+    digits[id] = [makeDigit(), makeDigit()];
+    digits[id].forEach(x => box.appendChild(x));
+  });
+  function render() {
+    for (const id of ['blue', 'red']) {
+      setDigit(digits[id][0], Math.floor(score[id] / 10));
+      setDigit(digits[id][1], score[id] % 10);
+    }
+  }
+  render();
+
+  function setServer(id) {
+    for (const s of ['blue', 'red']) document.getElementById(s).classList.toggle('serving', s === id);
+  }
+  function glow(id) {
+    const el = document.getElementById(id);
+    el.classList.remove('flash');
+    void el.offsetWidth; // restart animation on rapid taps
+    el.classList.add('flash');
+  }
+
+  // set a side's score; speak if the total went up
+  function apply(id, n) {
+    n = Math.max(0, Math.min(99, n | 0));
+    if (score[id] === n) return;
+    const before = score.blue + score.red;
+    score[id] = n;
+    render();
+    if (score.blue + score.red > before) { setServer(id); glow(id); announce(score.blue, score.red); }
+  }
+
+  // ---------- Firebase Realtime Database adapter ----------
+  // Paste your Firebase web config here (Project settings > Your apps > Web).
+  // databaseURL is required. Leave databaseURL empty to run local-only.
+  const FIREBASE_CONFIG = {
+    apiKey: "AIzaSyBJRM1G5ovdep8idGG3HDPg-2Xedvpkygw",
+    authDomain: "scoreboard-ae50e.firebaseapp.com",
+    databaseURL: "https://scoreboard-ae50e-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "scoreboard-ae50e",
+    appId: "1:387570782172:web:cc6f6448e5ed56f2cdc919"
+  };
+  // Optional: use a different room name per match
+  const ROOM = new URLSearchParams(location.search).get('room') || 'main';
+
+  function makeDb() {
+    if (!window.firebase || !FIREBASE_CONFIG.databaseURL) return null;
+    try {
+      firebase.initializeApp(FIREBASE_CONFIG);
+      const rtdb = firebase.database();
+      return {
+        doc(path) {
+          const ref = rtdb.ref('rooms/' + ROOM + '/' + path);
+          return {
+            set: data => ref.set(data),
+            onSnapshot(next, error) {
+              const cb = s => next({ data: () => s.val() || undefined, metadata: { hasPendingWrites: false } });
+              ref.on('value', cb, e => error && error(e));
+              return () => ref.off('value', cb);
+            }
+          };
+        }
+      };
+    } catch (e) { return null; }
+  }
+
+  // ---------- Shared storage (db), falls back to local-only ----------
+  const statusEl = document.getElementById('status');
+  const docs = {};
+  const busy = { blue: false, red: false };
+  const dirty = { blue: false, red: false };
+  let lastDoc = null;
+
+  async function flush(id) {
+    if (!docs[id]) return;
+    if (busy[id]) { dirty[id] = true; return; }
+    busy[id] = true;
+    try {
+      do {
+        dirty[id] = false;
+        await docs[id].set({ n: score[id] });
+      } while (dirty[id]);
+      statusEl.textContent = '‡∏ã‡∏¥‡∏á‡∏Å‡πå‡∏ó‡∏∏‡∏Å‡πÄ‡∏Ñ‡∏£‡∏∑‡πà‡∏≠‡∏á';
+    } catch (e) {
+      statusEl.textContent = '‡πÄ‡∏Ñ‡∏£‡∏∑‡πà‡∏≠‡∏á‡∏ô‡∏µ‡πâ‡πÄ‡∏ó‡πà‡∏≤‡∏ô‡∏±‡πâ‡∏ô (‡πÑ‡∏°‡πà‡∏°‡∏µ‡∏™‡∏¥‡∏ó‡∏ò‡∏¥‡πå‡πÄ‡∏Ç‡∏µ‡∏¢‡∏ô)';
+    }
+    busy[id] = false;
+  }
+
+  function saveServer(side) { if (lastDoc) lastDoc.set({ side }).catch(() => {}); }
+  // history of who scored, e.g. "bbr" = blue, blue, red (shared so undo works from any device)
+  let hist = '';
+  let histDoc = null;
+  const SIDE = { b: 'blue', r: 'red' };
+  function saveHist() { if (histDoc) histDoc.set({ h: hist }).catch(() => {}); }
+
+  function add(id) {
+    apply(id, (score[id] + 1) % 100); flush(id); saveServer(id);
+    hist = (hist + id[0]).slice(-200); saveHist();
+  }
+  function undo() {
+    if (!hist) return;
+    const id = SIDE[hist.slice(-1)];
+    hist = hist.slice(0, -1);
+    score[id] = (score[id] + 99) % 100;
+    render();
+    const prev = SIDE[hist.slice(-1)] || null;
+    setServer(prev);
+    flush(id); saveServer(prev || ''); saveHist();
+  }
+  function resetAll() {
+    for (const id of ['blue', 'red']) {
+      score[id] = 0;
+    }
+    hist = '';
+    render();
+    setServer(null);
+    flush('blue'); flush('red'); saveServer(''); saveHist();
+  }
+
+  document.getElementById('blue').addEventListener('click', () => add('blue'));
+  document.getElementById('red').addEventListener('click', () => add('red'));
+  const undoBtn = document.getElementById('undo');
+  undoBtn.addEventListener('click', e => { e.stopPropagation(); undo(); undoBtn.blur(); });
+  const resetBtn = document.getElementById('reset');
+  resetBtn.addEventListener('click', e => { e.stopPropagation(); resetAll(); resetBtn.blur(); });
+
+  document.addEventListener('keydown', e => {
+    if (e.repeat) return;
+    const k = e.key.toLowerCase();
+    if (k === 'a') add('blue');
+    else if (k === 'd') add('red');
+    else if (k === 'z') undo();
+  });
+
+  (async () => {
+    let db = null;
+    db = makeDb();
+    if (!db) { statusEl.textContent = '‡πÄ‡∏Ñ‡∏£‡∏∑‡πà‡∏≠‡∏á‡∏ô‡∏µ‡πâ‡πÄ‡∏ó‡πà‡∏≤‡∏ô‡∏±‡πâ‡∏ô'; return; }
+    let first = { blue: true, red: true };
+    for (const id of ['blue', 'red']) {
+      docs[id] = db.doc('score/' + id);
+      docs[id].onSnapshot(snap => {
+        if (snap.metadata.hasPendingWrites || busy[id]) return;
+        const d = snap.data();
+        const n = d && typeof d.n === 'number' ? d.n : 0;
+        if (first[id]) { first[id] = false; score[id] = Math.max(0, Math.min(99, n | 0)); render(); }
+        else apply(id, n);
+      }, () => { statusEl.textContent = '‡πÄ‡∏Ñ‡∏£‡∏∑‡πà‡∏≠‡∏á‡∏ô‡∏µ‡πâ‡πÄ‡∏ó‡πà‡∏≤‡∏ô‡∏±‡πâ‡∏ô'; });
+    }
+    histDoc = db.doc('score/history');
+    histDoc.onSnapshot(snap => {
+      if (snap.metadata.hasPendingWrites) return;
+      const d = snap.data();
+      hist = d && typeof d.h === 'string' ? d.h : '';
+    }, () => {});
+    lastDoc = db.doc('score/last');
+    lastDoc.onSnapshot(snap => {
+      if (snap.metadata.hasPendingWrites) return;
+      const d = snap.data();
+      setServer(d && (d.side === 'blue' || d.side === 'red') ? d.side : null);
+    }, () => {});
+    statusEl.textContent = '‡∏ã‡∏¥‡∏á‡∏Å‡πå‡∏ó‡∏∏‡∏Å‡πÄ‡∏Ñ‡∏£‡∏∑‡πà‡∏≠‡∏á';
+  })();
+</script>
+</body>
+</html>
