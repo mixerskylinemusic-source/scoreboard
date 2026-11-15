@@ -50,9 +50,9 @@
     <section class="team red" id="red"><div class="digits"></div></section>
   </div>
   <div class="bar">
-    <button id="undo" title="‡∏¢‡πâ‡∏≠‡∏ô‡πÅ‡∏ï‡πâ‡∏°‡∏•‡πà‡∏≤‡∏™‡∏∏‡∏î (Z)">‚Ü∂ UNDO</button>
+    <button id="undo" title="ย้อนแต้มล่าสุด (Z)">↶ UNDO</button>
     <button id="reset">RESET</button>
-    <button id="sound" title="‡πÄ‡∏õ‡∏¥‡∏î/‡∏õ‡∏¥‡∏î‡πÄ‡∏™‡∏µ‡∏¢‡∏á">üîä</button>
+    <button id="sound" title="เปิด/ปิดเสียง">🔊</button>
   </div>
   <div id="status"></div>
 
@@ -86,12 +86,12 @@
   }
 
   // ---------- Thai number words ----------
-  const ONES = ['‡∏®‡∏π‡∏ô‡∏¢‡πå','‡∏´‡∏ô‡∏∂‡πà‡∏á','‡∏™‡∏≠‡∏á','‡∏™‡∏≤‡∏°','‡∏™‡∏µ‡πà','‡∏´‡πâ‡∏≤','‡∏´‡∏Å','‡πÄ‡∏à‡πá‡∏î','‡πÅ‡∏õ‡∏î','‡πÄ‡∏Å‡πâ‡∏≤'];
+  const ONES = ['ศูนย์','หนึ่ง','สอง','สาม','สี่','ห้า','หก','เจ็ด','แปด','เก้า'];
   function thai(n) {
     if (n < 10) return ONES[n];
     const t = Math.floor(n / 10), o = n % 10;
-    const tens = t === 1 ? '‡∏™‡∏¥‡∏ö' : t === 2 ? '‡∏¢‡∏µ‡πà‡∏™‡∏¥‡∏ö' : ONES[t] + '‡∏™‡∏¥‡∏ö';
-    return tens + (o === 0 ? '' : o === 1 ? '‡πÄ‡∏≠‡πá‡∏î' : ONES[o]);
+    const tens = t === 1 ? 'สิบ' : t === 2 ? 'ยี่สิบ' : ONES[t] + 'สิบ';
+    return tens + (o === 0 ? '' : o === 1 ? 'เอ็ด' : ONES[o]);
   }
 
   // ---------- Speech ----------
@@ -117,7 +117,7 @@
   soundBtn.addEventListener('click', e => {
     e.stopPropagation();
     soundOn = !soundOn;
-    soundBtn.textContent = soundOn ? 'üîä' : 'üîá';
+    soundBtn.textContent = soundOn ? '🔊' : '🔇';
     if (!soundOn && window.speechSynthesis) speechSynthesis.cancel();
     soundBtn.blur();
   });
@@ -208,9 +208,9 @@
         dirty[id] = false;
         await docs[id].set({ n: score[id] });
       } while (dirty[id]);
-      statusEl.textContent = '‡∏ã‡∏¥‡∏á‡∏Å‡πå‡∏ó‡∏∏‡∏Å‡πÄ‡∏Ñ‡∏£‡∏∑‡πà‡∏≠‡∏á';
+      statusEl.textContent = 'ซิงก์ทุกเครื่อง';
     } catch (e) {
-      statusEl.textContent = '‡πÄ‡∏Ñ‡∏£‡∏∑‡πà‡∏≠‡∏á‡∏ô‡∏µ‡πâ‡πÄ‡∏ó‡πà‡∏≤‡∏ô‡∏±‡πâ‡∏ô (‡πÑ‡∏°‡πà‡∏°‡∏µ‡∏™‡∏¥‡∏ó‡∏ò‡∏¥‡πå‡πÄ‡∏Ç‡∏µ‡∏¢‡∏ô)';
+      statusEl.textContent = 'เครื่องนี้เท่านั้น (ไม่มีสิทธิ์เขียน)';
     }
     busy[id] = false;
   }
@@ -264,7 +264,7 @@
   (async () => {
     let db = null;
     db = makeDb();
-    if (!db) { statusEl.textContent = '‡πÄ‡∏Ñ‡∏£‡∏∑‡πà‡∏≠‡∏á‡∏ô‡∏µ‡πâ‡πÄ‡∏ó‡πà‡∏≤‡∏ô‡∏±‡πâ‡∏ô'; return; }
+    if (!db) { statusEl.textContent = 'เครื่องนี้เท่านั้น'; return; }
     let first = { blue: true, red: true };
     for (const id of ['blue', 'red']) {
       docs[id] = db.doc('score/' + id);
@@ -274,7 +274,7 @@
         const n = d && typeof d.n === 'number' ? d.n : 0;
         if (first[id]) { first[id] = false; score[id] = Math.max(0, Math.min(99, n | 0)); render(); }
         else apply(id, n);
-      }, () => { statusEl.textContent = '‡πÄ‡∏Ñ‡∏£‡∏∑‡πà‡∏≠‡∏á‡∏ô‡∏µ‡πâ‡πÄ‡∏ó‡πà‡∏≤‡∏ô‡∏±‡πâ‡∏ô'; });
+      }, () => { statusEl.textContent = 'เครื่องนี้เท่านั้น'; });
     }
     histDoc = db.doc('score/history');
     histDoc.onSnapshot(snap => {
@@ -288,7 +288,7 @@
       const d = snap.data();
       setServer(d && (d.side === 'blue' || d.side === 'red') ? d.side : null);
     }, () => {});
-    statusEl.textContent = '‡∏ã‡∏¥‡∏á‡∏Å‡πå‡∏ó‡∏∏‡∏Å‡πÄ‡∏Ñ‡∏£‡∏∑‡πà‡∏≠‡∏á';
+    statusEl.textContent = 'ซิงก์ทุกเครื่อง';
   })();
 </script>
 </body>
