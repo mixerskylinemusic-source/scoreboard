@@ -57,8 +57,41 @@
     color: #ccc; background: #000; cursor: pointer; opacity: .7;
   }
   .bar button:hover { opacity: 1; }
-  #sound { padding: 8px 14px; letter-spacing: 0; }
+  #sound, #full { padding: 8px 14px; letter-spacing: 0; }
   #status { position: fixed; left: 12px; bottom: 10px; font-size: 11px; color: #666; }
+  #camBtn { padding: 8px 14px; letter-spacing: 0; }
+  #camBtn.on { border-color: #4ade80; color: #4ade80; opacity: 1; }
+  /* camera auto-scoring (experimental) */
+  #cam { position: fixed; inset: 0; z-index: 20; background: #000; display: flex; align-items: center; justify-content: center; color: #fff; }
+  #cam[hidden], #camConfirm[hidden] { display: none; }
+  #cam .stage { position: relative; width: min(100vw, calc(100vh * var(--ar, 1.7778))); aspect-ratio: var(--ar, 1.7778); }
+  #cam video, #cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #cam.pip { inset: auto auto 64px 8px; width: 40vw; max-width: 340px; border: 1px solid #555; border-radius: 10px; overflow: hidden; display: block; cursor: zoom-in; }
+  #cam.pip .stage { width: 100%; }
+  #camTop { position: absolute; top: 0; left: 0; right: 0; z-index: 3; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; background: #0007; font-size: 14px; pointer-events: none; }
+  #camBtns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; pointer-events: auto; align-self: flex-start; }
+  #cam.pip #camTop { top: auto; bottom: 0; padding: 3px 6px; background: #000b; }
+  #cam.pip #camBtns { display: none; }
+  #camTop select { font-size: 14px; background: #111; color: #eee; border: 1px solid #777; border-radius: 999px; padding: 5px 8px; }
+  #camTop label { display: flex; gap: 6px; align-items: center; }
+  #camMsg { font-size: clamp(12px, 1.8vw, 16px); text-shadow: 0 1px 3px #000; }
+  #cam.pip #camMsg { font-size: 11px; }
+  #camTop button, #camConfirmBtns button {
+    font-size: 14px; font-weight: 600; letter-spacing: 0; border: 1px solid #777; border-radius: 999px;
+    padding: 6px 14px; color: #eee; background: #111; cursor: pointer; opacity: 1;
+  }
+  #camConfirmBtns button.b { background: #2f6bff; border-color: #2f6bff; }
+  #camConfirmBtns button.r { background: #ff2d3d; border-color: #ff2d3d; }
+  #camConfirm {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 30; min-width: 260px;
+    background: #111e; border: 2px solid var(--c, #888); border-radius: 14px; padding: 12px 16px; color: #fff; text-align: center;
+    box-shadow: 0 0 24px var(--c, #888);
+  }
+  #camConfirmText { font-size: clamp(16px, 3vw, 26px); font-weight: 700; white-space: pre-line; }
+  #camConfirmBtns { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
+  .cbar { height: 4px; background: #333; margin-top: 8px; border-radius: 2px; overflow: hidden; }
+  .cbar i { display: block; height: 100%; width: 100%; background: var(--c, #fff); }
+  @keyframes cdown { to { width: 0; } }
 </style>
 </head>
 <body>
@@ -70,6 +103,35 @@
     <button id="undo" title="ย้อนแต้มล่าสุด (Z)">↶ UNDO</button>
     <button id="reset">RESET</button>
     <button id="sound" title="เปิด/ปิดเสียง">🔊</button>
+    <button id="full" title="เต็มจอ (F)">⛶</button>
+    <button id="camBtn" title="กล้องนับแต้มอัตโนมัติ (ทดลอง)">📷</button>
+  </div>
+  <div id="cam" hidden>
+    <div class="stage">
+      <video id="camVideo" playsinline muted autoplay></video>
+      <canvas id="camOverlay"></canvas>
+      <div id="camTop">
+        <div id="camBtns">
+        <button id="camSetup">ตั้งสนามใหม่</button>
+        <button id="camUndoPt" hidden>↶ ลบจุด</button>
+        <button id="camDone" hidden>เสร็จ ✓</button>
+        <label>ความไว <input id="camSens" type="range" min="110" max="240" value="185"></label>
+        <button id="camClip">🎞 ใช้คลิป</button>
+        <button id="camLive">📷 กล้องสด</button>
+        <input id="camFile" type="file" accept="video/*" hidden>
+        <button id="camPlay">⏸</button>
+        <select id="camSpeed"><option value="0.25">0.25x</option><option value="0.5">0.5x</option><option value="1" selected>1x</option></select>
+        <button id="camMin">ย่อ</button>
+        <button id="camClose">✕ ปิดกล้อง</button>
+        </div>
+        <div id="camMsg"></div>
+      </div>
+    </div>
+  </div>
+  <div id="camConfirm" hidden>
+    <div id="camConfirmText"></div>
+    <div id="camConfirmBtns"></div>
+    <div class="cbar"><i></i></div>
   </div>
   <div id="status"></div>
 
@@ -141,6 +203,20 @@
     if (!soundOn && window.speechSynthesis) speechSynthesis.cancel();
     soundBtn.blur();
   });
+
+  // ---------- Fullscreen ----------
+  const fullBtn = document.getElementById('full');
+  function toggleFull() {
+    const d = document, el = d.documentElement;
+    const on = d.fullscreenElement || d.webkitFullscreenElement;
+    try {
+      if (on) (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+      else (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+    } catch (e) {}
+  }
+  if (!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)) fullBtn.style.display = 'none';   // e.g. iPhone Safari
+  fullBtn.addEventListener('click', e => { e.stopPropagation(); toggleFull(); fullBtn.blur(); });
+  addEventListener('keydown', e => { if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) toggleFull(); });
 
   // ---------- State ----------
   const score = { blue: 0, red: 0 };
@@ -253,7 +329,7 @@
   const docs = {};
   const busy = { blue: false, red: false };
   const dirty = { blue: false, red: false };
-  let lastDoc = null;
+  let lastDoc = null, propDoc = null;
 
   async function flush(id) {
     if (!docs[id]) return;
@@ -344,7 +420,491 @@
       const d = snap.data();
       setServer(d && (d.side === 'blue' || d.side === 'red') ? d.side : null);
     }, () => {});
+    propDoc = db.doc('score/proposal');
+    propDoc.onSnapshot(snap => {
+      const p = snap.data();
+      try { cam.remote(p, patch => propDoc.set(Object.assign({}, p, patch)).catch(() => {})); } catch (e) {}
+    }, () => {});
     statusEl.textContent = 'ซิงก์ทุกเครื่อง';
+  })();
+
+  // ---------- Camera auto-scoring (experimental) ----------
+  // Watches the court, finds a small bright blob (the shuttle) that was flying and then rests on the floor,
+  // works out which half it landed on, and proposes a point (auto-confirms after 3 s unless cancelled).
+  // Calibration is flexible so a court partly out of frame still works: tap the visible court outline
+  // (>= 3 points, use the frame edge where lines run off-screen), 2 points on the net line, 1 point in BLUE's half.
+  const cam = (() => {
+    const $ = id => document.getElementById(id);
+    const root = $('cam'), video = $('camVideo'), ov = $('camOverlay'), msg = $('camMsg');
+    const octx = ov.getContext('2d');
+    const W = 640;
+    let H = 360, stream = null, timer = null, mode = 'off'; // off | calib | watch
+    let poly = [], net = [], blueRef = null; // normalized 0..1 points
+    let phase = 'poly', geo = null;
+    let thrBright = 185, thrDiff = 40;
+    const work = document.createElement('canvas');
+    let wctx = null, gray, mnA, flg;
+    let moves = [], cands = [], blocked = [], lastTrigger = 0, confirmTimer = null;
+    let clipUrl = null; // when set, we are watching a video file instead of the camera
+    const NAME = { blue: 'น้ำเงิน', red: 'แดง' };
+    const other = t => (t === 'blue' ? 'red' : 'blue');
+    const calibrated = () => poly.length >= 3 && net.length === 2 && !!blueRef;
+
+    // ---- remembered setups: court lines are stored per source ('camera', or a clip's name|size|date)
+    let calibKey = 'camera', clipKey = null, lastPosSave = 0;
+    const allCal = () => { try { return JSON.parse(localStorage.getItem('camCalib3') || '{}') || {}; } catch (e) { return {}; } };
+    const validCal = c => c && Array.isArray(c.poly) && c.poly.length >= 3 && Array.isArray(c.net) && c.net.length === 2 && c.blueRef;
+    const getCal = key => { const c = allCal()[key]; return validCal(c) ? c : null; };
+    function applyCal(c) { poly = c ? c.poly : []; net = c ? c.net : []; blueRef = c ? c.blueRef : null; }
+    function save() { try { const a = allCal(); a[calibKey] = { poly, net, blueRef }; localStorage.setItem('camCalib3', JSON.stringify(a)); } catch (e) {} }
+    try { // migrate the older single saved setup
+      const o = JSON.parse(localStorage.getItem('camCalib2') || 'null');
+      if (validCal(o) && !getCal('camera')) { poly = o.poly; net = o.net; blueRef = o.blueRef; save(); }
+    } catch (e) {}
+    applyCal(getCal('camera'));
+    const pref = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} };
+    // IndexedDB keeps the clip's file handle (Chrome/Edge) so it reopens with one tap, without picking the file again
+    const idb = () => new Promise((res, rej) => { const r = indexedDB.open('scoreboardCam', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    const idbSet = async (k, v) => { const d = await idb(); return new Promise((res, rej) => { const tx = d.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); };
+    const idbGet = async k => { const d = await idb(); return new Promise((res, rej) => { const q = d.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); };
+
+    const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    function inPoly(p, pl) {
+      let c = false;
+      for (let i = 0, j = pl.length - 1; i < pl.length; j = i++) {
+        const a = pl[i], b = pl[j];
+        if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) c = !c;
+      }
+      return c;
+    }
+    function grow(pl, k) {
+      const cx = pl.reduce((s, p) => s + p.x, 0) / pl.length, cy = pl.reduce((s, p) => s + p.y, 0) / pl.length;
+      return pl.map(p => ({ x: cx + (p.x - cx) * k, y: cy + (p.y - cy) * k }));
+    }
+    function rebuild() {
+      if (!calibrated()) { geo = null; return; }
+      const px = p => ({ x: p.x * W, y: p.y * H });
+      const quad = poly.map(px), big = grow(quad, 1.25);
+      const xs = big.map(p => p.x), ys = big.map(p => p.y);
+      const box = {
+        x0: Math.max(0, Math.floor(Math.min(...xs))), x1: Math.min(W, Math.ceil(Math.max(...xs))),
+        y0: Math.max(0, Math.floor(Math.min(...ys))), y1: Math.min(H, Math.ceil(Math.max(...ys)))
+      };
+      geo = { quad, big, box, n1: px(net[0]), n2: px(net[1]), blue: px(blueRef) };
+    }
+    // which team owns the half of the net this point is on
+    function ownerOf(p) {
+      const { n1, n2, blue } = geo;
+      const s = q => (n2.x - n1.x) * (q.y - n1.y) - (n2.y - n1.y) * (q.x - n1.x);
+      return (s(p) > 0) === (s(blue) > 0) ? 'blue' : 'red';
+    }
+    function classify(p) {
+      if (inPoly(p, geo.quad)) { const owner = ownerOf(p); return { kind: 'in', owner, winner: other(owner) }; }
+      if (inPoly(p, geo.big)) return { kind: 'out' };
+      return null;
+    }
+
+    // connected components of a 0/1 mask inside box; returns compact blobs only
+    function blobs(mask, box, minA, maxA) {
+      let cnt = 0;
+      for (let y = box.y0; y < box.y1; y++) for (let x = box.x0, r = y * W; x < box.x1; x++) cnt += mask[r + x];
+      if (cnt > 5000) return []; // too much bright motion = noise (people, lights)
+      const out = [], stack = [];
+      for (let y = box.y0; y < box.y1; y++) {
+        for (let x = box.x0; x < box.x1; x++) {
+          const i = y * W + x;
+          if (!mask[i]) continue;
+          let a = 0, sx = 0, sy = 0;
+          stack.length = 0; stack.push(i); mask[i] = 0;
+          while (stack.length) {
+            const k = stack.pop(), kx = k % W, ky = (k - kx) / W;
+            a++; sx += kx; sy += ky;
+            if (kx > box.x0 && mask[k - 1]) { mask[k - 1] = 0; stack.push(k - 1); }
+            if (kx < box.x1 - 1 && mask[k + 1]) { mask[k + 1] = 0; stack.push(k + 1); }
+            if (ky > box.y0 && mask[k - W]) { mask[k - W] = 0; stack.push(k - W); }
+            if (ky < box.y1 - 1 && mask[k + W]) { mask[k + W] = 0; stack.push(k + W); }
+          }
+          if (a >= minA && a <= maxA) out.push({ x: sx / a, y: sy / a, a });
+        }
+      }
+      return out;
+    }
+
+    // was there a real flight (several moving blobs spread over >=25px) ending near this resting blob?
+    function flew(c) {
+      const ms = moves.filter(m => dist(m, c) < 120 && m.t <= c.first + 150);
+      if (ms.length < 3) return false;
+      let spread = 0;
+      for (const a of ms) for (const b of ms) spread = Math.max(spread, dist(a, b));
+      return spread >= 25;
+    }
+
+    // ---- per-frame image prep: whiteness (min channel), flags (1 = neutral white, 2 = person-coloured), luminance
+    function alloc() { gray = new Uint8ClampedArray(W * H); mnA = new Uint8Array(W * H); flg = new Uint8Array(W * H); }
+    const GW = 160, GH = 90; // coarse grid used to keep blobs away from players
+    const personGrid = new Uint8Array(GW * GH), pgDil = new Uint8Array(GW * GH);
+    function frameFromRGBA(d) {
+      personGrid.fill(0);
+      for (let y = 0, i = 0, j = 0; y < H; y++) {
+        const gy = ((y * GH / H) | 0) * GW;
+        for (let x = 0; x < W; x++, i += 4, j++) {
+          const r = d[i], g = d[i + 1], b = d[i + 2];
+          const mx = r > g ? (r > b ? r : b) : (g > b ? g : b), mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+          mnA[j] = mn; gray[j] = (r * 77 + g * 150 + b * 29) >> 8;
+          let f = 0;
+          if (mn > thrBright && mx - mn < 45) f = 1;
+          else if ((r > g && r - b > 50) || mx < 45) { f = 2; personGrid[gy + ((x * GW / W) | 0)] = 1; }
+          flg[j] = f;
+        }
+      }
+      // dilate player cells by 3 cells (~12 px) in both directions
+      const tmpG = new Uint8Array(GW * GH);
+      for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+        let v = 0;
+        for (let k = -3; k <= 3 && !v; k++) { const xx = x + k; if (xx >= 0 && xx < GW && personGrid[y * GW + xx]) v = 1; }
+        tmpG[y * GW + x] = v;
+      }
+      for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+        let v = 0;
+        for (let k = -3; k <= 3 && !v; k++) { const yy = y + k; if (yy >= 0 && yy < GH && tmpG[yy * GW + x]) v = 1; }
+        pgDil[y * GW + x] = v;
+      }
+    }
+    const nearPerson = b => pgDil[((b.y * GH / H) | 0) * GW + ((b.x * GW / W) | 0)] === 1;
+
+    // history of the brightest value seen at each pixel (delayed 2 s so a fresh landing is not absorbed at once);
+    // court lines revealed after a player walks away are NOT "new white things"
+    let hm = null, ring = [], ringT = [], prevMn = null, prevGray = null, startT = 0, lastT = null, decayN = 0;
+    let cb = null, cp = null; // 4x4-block means of luminance (noise-free activity measure)
+    function blocks(out) {
+      const gh = Math.floor(H / 4);
+      for (let by = 0; by < gh; by++) for (let bx = 0; bx < 160; bx++) {
+        let a = 0;
+        for (let dy = 0; dy < 4; dy++) { const r = (by * 4 + dy) * W + bx * 4; a += gray[r] + gray[r + 1] + gray[r + 2] + gray[r + 3]; }
+        out[by * 160 + bx] = a / 16;
+      }
+    }
+    let Es = 0, emaE = null, activeSince = null, lowSince = null, lastCue = -1e9;
+
+    // one frame in (frameFromRGBA done); t in ms. Returns a landing event, a rally-end cue, or null
+    function feed(t) {
+      const n = W * H, tt = t / 1000;
+      if (!hm || hm.length !== n) {
+        hm = Uint8Array.from(mnA); prevMn = Uint8Array.from(mnA); prevGray = Uint8Array.from(gray);
+        ring = []; ringT = []; startT = tt; lastT = t;
+        cb = new Float32Array(160 * Math.floor(H / 4)); cp = new Float32Array(cb.length); blocks(cp);
+        return null;
+      }
+      let ev = null;
+      const warm = tt - startT > 6;
+      // ---- activity energy -> rally-end cue (players stop after a long burst of movement)
+      let s = 0;
+      blocks(cb);
+      for (let i = 0; i < cb.length; i++) s += Math.abs(cb[i] - cp[i]);
+      const c = cb.length;
+      cp.set(cb);
+      const dtS = Math.min(0.5, Math.max(0.001, (t - lastT) / 1000)); lastT = t;
+      Es += (s / c - Es) * Math.min(1, dtS);
+      emaE = (emaE == null || tt - startT < 3) ? Es : emaE + (Es - emaE) * dtS / 30;
+      if (tt - startT > 8) {
+        if (Es > 0.9 * emaE) { if (activeSince == null) activeSince = tt; lowSince = null; }
+        else if (Es < 0.6 * emaE) {
+          if (lowSince == null) lowSince = tt;
+          if (activeSince != null && tt - lowSince >= 1.5 && lowSince - activeSince >= 2.5 && tt - lastCue > 6) {
+            lastCue = tt; activeSince = null; ev = { kind: 'ask' };
+          }
+        } else lowSince = null;
+      }
+      // ---- shuttle: small neutral-white blob that flew and then rests on the floor away from players
+      if (geo) {
+        const box = geo.box;
+        const mov = new Uint8Array(n), rest = new Uint8Array(n);
+        for (let y = box.y0; y < box.y1; y++) {
+          for (let x = box.x0, i = y * W + box.x0; x < box.x1; x++, i++) {
+            if (flg[i] !== 1) continue;
+            const v = mnA[i];
+            if (Math.abs(v - prevMn[i]) > 40) mov[i] = 1;
+            if (v - hm[i] > thrDiff) rest[i] = 1;
+          }
+        }
+        for (const b of blobs(mov, box, 2, 80)) if (inPoly(b, geo.big) && !nearPerson(b)) moves.push({ x: b.x, y: b.y, t });
+        moves = moves.filter(m => t - m.t < 1500);
+        const rb = blobs(rest, box, 4, 70).filter(b => inPoly(b, geo.big) && !nearPerson(b));
+        for (const k of blocked) if (rb.some(b => dist(b, k) < 8)) k.seen = t;
+        blocked = blocked.filter(k => t - k.seen < 1200);
+        for (const q of cands) q.miss++;
+        for (const b of rb) {
+          if (blocked.some(k => dist(b, k) < 8)) continue;
+          const q = cands.find(z => dist(z, b) < 4);
+          if (q) { q.x = b.x; q.y = b.y; q.count++; q.miss = 0; }
+          else cands.push({ x: b.x, y: b.y, first: t, count: 1, miss: 0 });
+        }
+        cands = cands.filter(q => q.miss <= 2);
+        if (warm && t - lastTrigger > 2500) {
+          for (const q of cands) {
+            if (q.count >= 8 && t - q.first >= 500 && flew(q)) {
+              lastTrigger = t;
+              blocked.push({ x: q.x, y: q.y, seen: t });
+              cands = cands.filter(z => z !== q);
+              const r = classify(q);
+              if (r) { ev = Object.assign({ x: q.x, y: q.y }, r); lastCue = tt; break; }
+            }
+          }
+        }
+      }
+      // history update (2 s delay)
+      ring.push(Uint8Array.from(mnA)); ringT.push(t);
+      while (ringT.length && t - ringT[0] >= 2000) {
+        const old = ring.shift(); ringT.shift();
+        if (++decayN % 60 === 0) for (let i = 0; i < n; i++) if (hm[i]) hm[i]--;
+        for (let i = 0; i < n; i++) if (old[i] > hm[i]) hm[i] = old[i];
+      }
+      prevMn.set(mnA); prevGray.set(gray);
+      return ev;
+    }
+
+    // ----- confirm banner -----
+    function hideConfirm() { clearTimeout(confirmTimer); $('camConfirm').hidden = true; }
+    function propose(ev) {
+      hideConfirm();
+      const box = $('camConfirm'), txt = $('camConfirmText'), btns = $('camConfirmBtns'), bar = box.querySelector('.cbar i');
+      btns.innerHTML = '';
+      const mk = (label, fn, cls) => {
+        const b = document.createElement('button');
+        b.textContent = label; if (cls) b.className = cls;
+        b.onclick = e => { e.stopPropagation(); fn(); };
+        btns.appendChild(b);
+      };
+      if (ev.kind === 'in') {
+        txt.textContent = 'ลูกตกฝั่ง' + NAME[ev.owner] + ' → ' + NAME[ev.winner] + ' +1';
+        box.style.setProperty('--c', ev.winner === 'blue' ? '#2f6bff' : '#ff2d3d');
+        mk('ยกเลิก', hideConfirm);
+        bar.style.animation = 'none'; void bar.offsetWidth; bar.style.animation = 'cdown 3s linear forwards';
+        confirmTimer = setTimeout(() => { hideConfirm(); add(ev.winner); }, 3000);
+      } else {
+        txt.textContent = ev.kind === 'ask' ? 'จบแต้มแล้ว? ใครได้แต้ม' : 'ลูกลงนอกสนาม — ใครได้แต้ม?';
+        box.style.setProperty('--c', '#facc15');
+        mk('น้ำเงิน +1', () => { hideConfirm(); add('blue'); }, 'b');
+        mk('แดง +1', () => { hideConfirm(); add('red'); }, 'r');
+        mk('ข้าม', hideConfirm);
+        bar.style.animation = 'none'; bar.style.width = '0';
+        confirmTimer = setTimeout(hideConfirm, ev.kind === 'ask' ? 12000 : 10000);
+      }
+      box.hidden = false;
+    }
+
+    // ----- drawing -----
+    function draw() {
+      octx.clearRect(0, 0, W, H);
+      octx.lineWidth = 2;
+      const px = p => ({ x: p.x * W, y: p.y * H });
+      const dot = (p, col) => { octx.fillStyle = col; octx.beginPath(); octx.arc(p.x, p.y, 5, 0, 7); octx.fill(); };
+      const pl = poly.map(px);
+      if (pl.length >= 2) {
+        octx.strokeStyle = '#4ade80'; octx.beginPath();
+        pl.forEach((p, i) => (i ? octx.lineTo(p.x, p.y) : octx.moveTo(p.x, p.y)));
+        if (mode === 'watch' || phase !== 'poly') octx.closePath();
+        octx.stroke();
+      }
+      pl.forEach(p => dot(p, '#4ade80'));
+      if (net.length) {
+        const n = net.map(px);
+        octx.strokeStyle = '#fff';
+        if (n.length === 2) { octx.beginPath(); octx.moveTo(n[0].x, n[0].y); octx.lineTo(n[1].x, n[1].y); octx.stroke(); }
+        n.forEach(p => dot(p, '#fff'));
+      }
+      if (blueRef) dot(px(blueRef), '#2f6bff');
+      if (mode === 'watch') {
+        octx.strokeStyle = '#facc15';
+        moves.forEach(m => { octx.beginPath(); octx.arc(m.x, m.y, 3, 0, 7); octx.stroke(); });
+        octx.strokeStyle = '#f0f';
+        cands.forEach(c => { octx.beginPath(); octx.arc(c.x, c.y, 8, 0, 7); octx.stroke(); });
+      }
+    }
+
+    // ----- loop -----
+    function tick() {
+      if (mode === 'off' || !wctx || video.readyState < 2) return;
+      wctx.drawImage(video, 0, 0, W, H);
+      frameFromRGBA(wctx.getImageData(0, 0, W, H).data);
+      if (mode === 'watch') { const ev = feed(clipUrl ? video.currentTime * 1000 : performance.now()); if (ev) propose(ev); }
+      if (clipUrl && clipKey && performance.now() - lastPosSave > 5000) { lastPosSave = performance.now(); pref('camPos:' + clipKey, String(video.currentTime)); }
+      draw();
+    }
+
+    // ----- modes -----
+    function setView(pip) { root.classList.toggle('pip', pip); }
+    function say(s) { msg.textContent = s; }
+    function calibMsg() {
+      if (phase === 'poly') say('1/3 แตะจุดรอบสนามที่เห็น (≥3 จุดเรียงต่อกัน เส้นที่หลุดจอให้แตะที่ขอบภาพ) แล้วกด "เสร็จ ✓" · แตะแล้ว ' + poly.length + ' จุด');
+      else if (phase === 'net') say('2/3 แตะ 2 จุดบนเส้นตาข่าย (แตะแล้ว ' + net.length + '/2)');
+      else say('3/3 แตะ 1 จุดในฝั่งของทีมน้ำเงิน');
+      $('camDone').hidden = !(phase === 'poly' && poly.length >= 3);
+      $('camUndoPt').hidden = !(poly.length + net.length > 0);
+    }
+    function startCalib() {
+      mode = 'calib'; phase = 'poly'; poly = []; net = []; blueRef = null; geo = null; setView(false); hideConfirm();
+      calibMsg();
+    }
+    function resetTracking() { hm = null; moves = []; cands = []; blocked = []; lastTrigger = -1e9; Es = 0; emaE = null; activeSince = null; lowSince = null; lastCue = -1e9; }
+    function watch() {
+      mode = 'watch'; resetTracking();
+      rebuild(); setView(true); $('camDone').hidden = true; $('camUndoPt').hidden = true;
+      say('ดูสนามอยู่');
+      $('camBtn').classList.add('on');
+    }
+    ov.addEventListener('click', e => {
+      if (mode === 'calib') {
+        const r = ov.getBoundingClientRect();
+        const p = { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height };
+        if (phase === 'poly') poly.push(p);
+        else if (phase === 'net') { net.push(p); if (net.length === 2) phase = 'blue'; }
+        else { blueRef = p; save(); watch(); return; }
+        calibMsg();
+      } else if (root.classList.contains('pip')) setView(false);
+    });
+    $('camUndoPt').addEventListener('click', () => {
+      if (mode !== 'calib') return;
+      if (phase === 'blue') { phase = 'net'; net.pop(); }
+      else if (phase === 'net') { if (net.length) net.pop(); else { phase = 'poly'; poly.pop(); } }
+      else poly.pop();
+      calibMsg();
+    });
+    $('camDone').addEventListener('click', () => { if (phase === 'poly' && poly.length >= 3) { phase = 'net'; calibMsg(); } });
+
+    async function prepare() {
+      try { await video.play(); } catch (e) {}
+      if (!video.videoWidth) await new Promise(r => video.addEventListener('loadedmetadata', r, { once: true }));
+      H = Math.round(W * video.videoHeight / video.videoWidth);
+      work.width = W; work.height = H; ov.width = W; ov.height = H;
+      wctx = work.getContext('2d', { willReadFrequently: true });
+      alloc();
+      root.style.setProperty('--ar', video.videoWidth / video.videoHeight);
+      clearInterval(timer); timer = setInterval(tick, 60);
+    }
+    video.addEventListener('seeked', () => { if (clipUrl) resetTracking(); }); // clip looped / scrubbed
+    async function openLive() {
+      if (clipUrl) { URL.revokeObjectURL(clipUrl); clipUrl = null; video.removeAttribute('src'); video.load(); }
+      video.loop = false; clipKey = null; calibKey = 'camera'; applyCal(getCal('camera'));
+      root.hidden = false;
+      say('กำลังเปิดกล้อง…');
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false
+        });
+      } catch (e) { say('เปิดกล้องไม่ได้: ' + (e && e.name ? e.name : e) + ' — ลองกด "ใช้คลิป" แทน'); return; }
+      pref('camLastMode', 'camera');
+      video.srcObject = stream;
+      await prepare();
+      if (calibrated()) watch(); else startCalib();
+    }
+    // opens whatever was used last: the saved clip (if the browser can remember it) or the live camera
+    async function open() {
+      if (pref('camLastMode') === 'clip') { try { if (await resumeClip()) return; } catch (e) {} }
+      return openLive();
+    }
+    const keyOf = f => f.name + '|' + f.size + '|' + f.lastModified;
+    async function useClip(url, key) {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      stream = null; video.srcObject = null;
+      if (clipUrl && clipUrl !== url) URL.revokeObjectURL(clipUrl);
+      clipUrl = url; clipKey = key || url; calibKey = 'clip:' + clipKey;
+      pref('camLastMode', 'clip');
+      root.hidden = false;
+      video.loop = true; video.muted = true; video.src = url;
+      await prepare();
+      video.playbackRate = +$('camSpeed').value;
+      $('camPlay').textContent = '⏸';
+      const pos = +pref('camPos:' + clipKey) || 0; // continue where we left off
+      if (pos > 1 && isFinite(video.duration) && pos < video.duration - 3) video.currentTime = pos;
+      const c = getCal(calibKey);
+      if (c) { applyCal(c); watch(); say('ใช้เส้นสนามที่ตั้งไว้ของคลิปนี้ (กด "ตั้งสนามใหม่" ถ้าต้องการแก้)'); }
+      else startCalib(); // first time with this clip: mark the court once
+    }
+    async function loadHandle(h, fresh) {
+      const f = await h.getFile();
+      if (fresh) { try { await idbSet('clipHandle', h); } catch (e) {} pref('camLastName', f.name); }
+      await useClip(URL.createObjectURL(f), keyOf(f));
+    }
+    async function resumeClip() {
+      const h = await idbGet('clipHandle');
+      if (!h || !h.queryPermission) return false;
+      let perm = await h.queryPermission({ mode: 'read' });
+      if (perm !== 'granted') perm = await h.requestPermission({ mode: 'read' });
+      if (perm !== 'granted') return false;
+      await loadHandle(h, false);
+      return true;
+    }
+    function close() {
+      mode = 'off'; clearInterval(timer); hideConfirm();
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      stream = null; video.srcObject = null; root.hidden = true;
+      if (clipUrl) { URL.revokeObjectURL(clipUrl); clipUrl = null; video.removeAttribute('src'); video.load(); }
+      $('camBtn').classList.remove('on');
+    }
+
+    $('camBtn').addEventListener('click', e => { e.stopPropagation(); root.hidden ? open() : close(); $('camBtn').blur(); });
+    $('camClose').addEventListener('click', close);
+    $('camClip').addEventListener('click', async () => {
+      if (window.showOpenFilePicker) { // Chrome/Edge: remember the file for next time
+        try {
+          const [h] = await window.showOpenFilePicker({ types: [{ description: 'วิดีโอ', accept: { 'video/*': ['.mp4', '.mov', '.m4v', '.webm', '.mkv'] } }] });
+          await loadHandle(h, true);
+          return;
+        } catch (e) { if (e && e.name === 'AbortError') return; }
+      }
+      $('camFile').click(); // other browsers: normal file picker (setup is still remembered for the same file)
+    });
+    $('camLive').addEventListener('click', openLive);
+    $('camFile').addEventListener('change', e => {
+      const f = e.target.files && e.target.files[0];
+      if (f) { pref('camLastName', f.name); useClip(URL.createObjectURL(f), keyOf(f)); }
+      e.target.value = '';
+    });
+    $('camPlay').addEventListener('click', () => {
+      if (video.paused) { video.play(); $('camPlay').textContent = '⏸'; } else { video.pause(); $('camPlay').textContent = '▶'; }
+    });
+    $('camSpeed').addEventListener('change', e => { video.playbackRate = +e.target.value; });
+    $('camMin').addEventListener('click', () => { if (mode === 'watch') setView(true); });
+    $('camSetup').addEventListener('click', startCalib);
+    $('camSens').addEventListener('input', e => { thrBright = +e.target.value; });
+
+    // ---- proposals sent by the auto_score.py helper (via the shared db): cancel / choose from any device
+    let remoteId = null;
+    function remote(p, respond) {
+      if (!p || p.status !== 'pending' || (p.ts && Date.now() - p.ts > 60000)) {
+        if (remoteId && (!p || p.id === remoteId)) { remoteId = null; hideConfirm(); }
+        return;
+      }
+      if (p.id === remoteId) return;
+      remoteId = p.id; hideConfirm();
+      const box = $('camConfirm'), txt = $('camConfirmText'), btns = $('camConfirmBtns'), bar = box.querySelector('.cbar i');
+      btns.innerHTML = '';
+      const mk = (label, fn, cls) => {
+        const b = document.createElement('button');
+        b.textContent = label; if (cls) b.className = cls;
+        b.onclick = e => { e.stopPropagation(); fn(); };
+        btns.appendChild(b);
+      };
+      const team = p.winner === 'blue' || p.winner === 'red' ? p.winner : null;
+      if (p.kind === 'auto' && team) {
+        txt.textContent = 'ระบบตรวจ: ' + NAME[team] + ' +1' + (p.why ? '\n' + p.why : '');
+        box.style.setProperty('--c', team === 'blue' ? '#2f6bff' : '#ff2d3d');
+        mk('ยกเลิก', () => respond({ status: 'cancelled' }));
+        bar.style.animation = 'none'; void bar.offsetWidth; bar.style.animation = 'cdown ' + (p.secs || 5) + 's linear forwards';
+      } else {
+        txt.textContent = 'จบแต้มแล้ว — ใครได้แต้ม?' + (team ? ' (ระบบเดา: ' + NAME[team] + ')' : '') + (p.why ? '\n' + p.why : '');
+        box.style.setProperty('--c', '#facc15');
+        mk('น้ำเงิน +1', () => respond({ status: 'chosen', winner: 'blue' }), 'b');
+        mk('แดง +1', () => respond({ status: 'chosen', winner: 'red' }), 'r');
+        mk('ข้าม', () => respond({ status: 'skipped' }));
+        bar.style.animation = 'none'; bar.style.width = '0';
+      }
+      box.hidden = false;
+    }
+
+    // exposed for testing
+    return { propose, remote, _t: { feedRGBA(d, t) { frameFromRGBA(d); return feed(t); }, alloc,  loadUrl: u => useClip(u, u), watch, setCalib(p, n, b) { poly = p; net = n; blueRef = b; rebuild(); }, H: () => H } };
   })();
 </script>
 </body>
